@@ -26,6 +26,8 @@ import com.netflix.zuul.dependency.cassandra.hystrix.HystrixCassandraGetRowsByKe
 import com.netflix.zuul.dependency.cassandra.hystrix.HystrixCassandraGetRowsByQuery;
 import com.netflix.zuul.dependency.cassandra.hystrix.HystrixCassandraPut;
 import com.netflix.zuul.event.ZuulEvent;
+import com.netflix.zuul.event.ZuulFilterEvent;
+import com.netflix.zuul.event.ZuulFilterEventType;
 import net.jcip.annotations.ThreadSafe;
 import org.junit.Before;
 import org.junit.Test;
@@ -278,6 +280,11 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
 
     @Override
     public FilterInfo addFilter(String filtercode, String filter_type, String filter_name, String disableFilterPropertyName, String filter_order) {
+        return addFilter(filtercode, filter_type, filter_name, disableFilterPropertyName, filter_order, new HashMap());
+    }
+
+    public FilterInfo addFilter(String filtercode, String filter_type, String filter_name, String disableFilterPropertyName, String filter_order, Map otherAttributes) {
+
         String filter_id = buildFilterID(filter_type, filter_name);
         FilterInfo latest = getLatestFilterInfoForFilter(filter_id);
         int revision = 1;
@@ -307,6 +314,7 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
         addFilterIdToIndex(APPLICATION_SCRIPTS + ZuulApplicationInfo.getApplicationName(), filter_id + "_" + revision);
         addFilterIdToIndex(getScriptsForFilterIndexKey(filter_id), filter_id + "_" + revision);
 
+        notifyOfFilterEvent(ZuulFilterEventType.UPLOAD, filter_id, revision, otherAttributes);
 
         /*
         * now we will retrieve it and return it (I do this instead of building the object from what I have above for the following reasons ...
@@ -322,8 +330,13 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
 
     }
 
+
     @Override
     public FilterInfo setCanaryFilter(String filter_id, int revision) {
+        return setCanaryFilter(filter_id, revision, new HashMap());
+    }
+
+    public FilterInfo setCanaryFilter(String filter_id, int revision, Map otherAttributes) {
 
         ArrayList<Integer> revisionsToDeactivate = new ArrayList<Integer>();
 
@@ -355,8 +368,10 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
                 cassandraGateway.upsert(filter_id + "_" + revisionToDeactivate, attributesForDeactivation);
             }
         }
+
         setChanged();
-        notifyObservers(new ZuulEvent("ZUUL_SCRIPT_CHANGE", "CANARY FILTER SET id = " + filter_id + "revision = " + revision));
+        notifyOfFilterEvent(ZuulFilterEventType.CANARY, filter_id, revision, otherAttributes);
+
         return getFilterInfoForFilter(filter_id, revision);
     }
 
@@ -385,6 +400,10 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
 
     @Override
     public FilterInfo setFilterActive(String filter_id, int revision) throws Exception {
+        return setFilterActive(filter_id, revision, new HashMap());
+    }
+
+    public FilterInfo setFilterActive(String filter_id, int revision, Map otherAttributes) throws Exception {
 
         FilterInfo filter = getFilterInfo(filter_id, revision);
         if (filter == null) throw new Exception("Filter not Found " + filter_id + "revision:" + revision);
@@ -425,13 +444,24 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
                 cassandraGateway.upsert(filter_id + "_" + revisionToDeactivate, attributesForDeactivation);
             }
         }
+
         setChanged();
-        notifyObservers(new ZuulEvent("ZUUL_SCRIPT_CHANGE", "ACTIVATED NEW ZUUL FILTER id = " + filter_id + " revision = " + revision));
+        notifyOfFilterEvent(ZuulFilterEventType.ACTIVATE, filter_id, revision, otherAttributes);
+
         return getFilterInfoForFilter(filter_id, revision);
+    }
+
+    protected void notifyOfFilterEvent(ZuulFilterEventType eventType, String filter_id, int revision, Map otherAttributes) {
+        String userName = (String) otherAttributes.get("userName");
+        notifyObservers(new ZuulFilterEvent(eventType, filter_id, revision, userName));
     }
 
     @Override
     public FilterInfo deActivateFilter(String filter_id, int revision) throws Exception {
+        return deActivateFilter(filter_id, revision, new HashMap());
+    }
+
+    public FilterInfo deActivateFilter(String filter_id, int revision, Map otherAttributes) throws Exception {
 
         FilterInfo filter = getFilterInfo(filter_id, revision);
         if (filter == null) throw new Exception("Filter not Found " + filter_id + "revision:" + revision);
@@ -449,8 +479,9 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
         attributesForActivation.put("active", false);
         attributesForActivation.put("canary", false);
         cassandraGateway.upsert(filter_id + "_" + revision, attributesForActivation);
+
         setChanged();
-        notifyObservers(new ZuulEvent("ZUUL_SCRIPT_CHANGE", "DEACTIVATED ZUUL FILTER id = " + filter_id + " revision = " + revision));
+        notifyOfFilterEvent(ZuulFilterEventType.DEACTIVATE, filter_id, revision, otherAttributes);
 
         return getFilterInfoForFilter(filter_id, revision);
     }
