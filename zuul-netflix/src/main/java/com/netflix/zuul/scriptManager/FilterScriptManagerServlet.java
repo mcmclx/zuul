@@ -16,36 +16,12 @@
 package com.netflix.zuul.scriptManager;
 
 
-import static org.mockito.Matchers.anyInt;
-import static org.mockito.Matchers.anyString;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.PrintWriter;
-import java.io.Writer;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Calendar;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
-import javax.servlet.ServletException;
-import javax.servlet.ServletOutputStream;
-import javax.servlet.http.HttpServlet;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
-
+import com.netflix.config.DynamicBooleanProperty;
+import com.netflix.config.DynamicPropertyFactory;
+import com.netflix.config.DynamicStringProperty;
+import com.netflix.zuul.constants.ZuulConstants;
+import com.netflix.zuul.util.JsonUtility;
 import net.jcip.annotations.ThreadSafe;
-
 import org.apache.commons.fileupload.FileItemFactory;
 import org.apache.commons.fileupload.FileItemStream;
 import org.apache.commons.fileupload.FileUploadException;
@@ -58,11 +34,17 @@ import org.mockito.MockitoAnnotations;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.netflix.config.DynamicBooleanProperty;
-import com.netflix.config.DynamicPropertyFactory;
-import com.netflix.config.DynamicStringProperty;
-import com.netflix.zuul.constants.ZuulConstants;
-import com.netflix.zuul.util.JsonUtility;
+import javax.servlet.ServletException;
+import javax.servlet.ServletOutputStream;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.io.*;
+import java.util.*;
+
+import static org.mockito.Matchers.anyInt;
+import static org.mockito.Matchers.anyString;
+import static org.mockito.Mockito.*;
 
 /**
  * Servlet for uploading/downloading/managing scripts.
@@ -395,7 +377,6 @@ public class FilterScriptManagerServlet extends HttpServlet {
         }
     }
 
-
     private String handlePostBody(HttpServletRequest request, HttpServletResponse response) throws IOException {
 
         FileItemFactory factory = new DiskFileItemFactory();
@@ -631,9 +612,9 @@ public class FilterScriptManagerServlet extends HttpServlet {
 
             ZuulFilterDAO dao = mock(ZuulFilterDAOCassandra.class);
             List<FilterInfo> scriptsForEndpoint = new ArrayList<FilterInfo>();
-            scriptsForEndpoint.add(new FilterInfo("name1:type", "code", "type", "name", "disable", "order", "app"));
-            scriptsForEndpoint.add(new FilterInfo("name2:type", "code", "type", "name", "disable", "order", "app"));
-            scriptsForEndpoint.add(new FilterInfo("name3:type", "code", "type", "name", "disable", "order", "app"));
+            scriptsForEndpoint.add(new FilterInfo("name1:type", 0, null, null, false, false, "code", "type", "name", "disable", "order", "app", null, null));
+            scriptsForEndpoint.add(new FilterInfo("name1:type", 0, null, null, false, false, "code", "type", "name", "disable", "order", "app", null, null));
+            scriptsForEndpoint.add(new FilterInfo("name1:type", 0, null, null, false, false, "code", "type", "name", "disable", "order", "app", null, null));
             when(dao.getZuulFiltersForFilterId(anyString())).thenReturn(scriptsForEndpoint);
 
             /* construct servlet */

@@ -25,9 +25,9 @@ import com.netflix.zuul.ZuulApplicationInfo;
 import com.netflix.zuul.dependency.cassandra.hystrix.HystrixCassandraGetRowsByKeys;
 import com.netflix.zuul.dependency.cassandra.hystrix.HystrixCassandraGetRowsByQuery;
 import com.netflix.zuul.dependency.cassandra.hystrix.HystrixCassandraPut;
-import com.netflix.zuul.event.ZuulEvent;
 import com.netflix.zuul.event.ZuulFilterEvent;
 import com.netflix.zuul.event.ZuulFilterEventType;
+import com.netflix.zuul.event.ZuulUser;
 import net.jcip.annotations.ThreadSafe;
 import org.junit.Before;
 import org.junit.Test;
@@ -265,12 +265,21 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             revision = (int) columns.getColumnByName("revision").getLongValue();
             boolean isActive = columns.getColumnByName("active").getBooleanValue();
             boolean isCanary = columns.getColumnByName("canary").getBooleanValue();
-            Date creationDate = columns.getColumnByName("creation_date").getDateValue();
             String filterCode = new String(columns.getColumnByName("filter_code").getByteArrayValue());
             String application_name = columns.getColumnByName("application_name").getStringValue();
 
-            FilterInfo filterInfo = new FilterInfo(filter_id, revision, creationDate, isActive, isCanary, filterCode, filterType, filterName, filterDisable, filterOrder, application_name);
+            Date creationDate = columns.getColumnByName("creation_date").getDateValue();
+            Date updatedDate = columns.getColumnByName("updated_date").getDateValue();
+
+            String createdByUserName = columns.getColumnByName("created_by").getStringValue();
+            String updatedByUserName = columns.getColumnByName("updated_by").getStringValue();
+            ZuulUser createdBy = createdByUserName == null ? null : new ZuulUser(createdByUserName);
+            ZuulUser updatedBy = updatedByUserName == null ? null : new ZuulUser(updatedByUserName);
+
+            FilterInfo filterInfo = new FilterInfo(filter_id, revision, creationDate, updatedDate, isActive, isCanary, filterCode,
+                    filterType, filterName, filterDisable, filterOrder, application_name, createdBy, updatedBy);
             return filterInfo;
+
         } catch (Exception e) {
             // unable to retrieve data for this row, could be missing the uri column (which shouldn't happen)
             logger.warn("Unable to retrieve data from row => uri : " + filterName + "  revision: " + revision + "  row: " + row, e);
@@ -280,10 +289,10 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
 
     @Override
     public FilterInfo addFilter(String filtercode, String filter_type, String filter_name, String disableFilterPropertyName, String filter_order) {
-        return addFilter(filtercode, filter_type, filter_name, disableFilterPropertyName, filter_order, new HashMap());
+        return addFilter(filtercode, filter_type, filter_name, disableFilterPropertyName, filter_order, null);
     }
 
-    public FilterInfo addFilter(String filtercode, String filter_type, String filter_name, String disableFilterPropertyName, String filter_order, Map otherAttributes) {
+    public FilterInfo addFilter(String filtercode, String filter_type, String filter_name, String disableFilterPropertyName, String filter_order, ZuulUser user) {
 
         String filter_id = buildFilterID(filter_type, filter_name);
         FilterInfo latest = getLatestFilterInfoForFilter(filter_id);
@@ -299,12 +308,17 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
         attributes.put("revision", (long) revision);
         attributes.put("active", false); // always false when inserting a new script
         attributes.put("canary", false); // always false when inserting a new script
-        attributes.put("creation_date", Calendar.getInstance().getTime());
-        // add each script as a separate column
         attributes.put("filter_code", filtercode.getBytes());
         attributes.put("filter_disable", disableFilterPropertyName);
         attributes.put("filter_order", filter_order);
         attributes.put("application_name", ZuulApplicationInfo.getApplicationName());
+
+        String userName = user == null ? "unknown" : user.getUserName();
+        Date now = Calendar.getInstance().getTime();
+        attributes.put("created_by", userName);
+        attributes.put("updated_by", userName);
+        attributes.put("creation_date", now);
+        attributes.put("updated_date", now);
 
         cassandraGateway.upsert(filter_id + "_" + revision, attributes);
         List<String> filterIds = getFilterIdsIndex(FILTER_ID + ZuulApplicationInfo.getApplicationName());
@@ -314,7 +328,7 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
         addFilterIdToIndex(APPLICATION_SCRIPTS + ZuulApplicationInfo.getApplicationName(), filter_id + "_" + revision);
         addFilterIdToIndex(getScriptsForFilterIndexKey(filter_id), filter_id + "_" + revision);
 
-        notifyOfFilterEvent(ZuulFilterEventType.UPLOAD, filter_id, revision, otherAttributes);
+        notifyOfFilterEvent(ZuulFilterEventType.UPLOAD, filter_id, revision, user);
 
         /*
         * now we will retrieve it and return it (I do this instead of building the object from what I have above for the following reasons ...
@@ -333,10 +347,10 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
 
     @Override
     public FilterInfo setCanaryFilter(String filter_id, int revision) {
-        return setCanaryFilter(filter_id, revision, new HashMap());
+        return setCanaryFilter(filter_id, revision, null);
     }
 
-    public FilterInfo setCanaryFilter(String filter_id, int revision, Map otherAttributes) {
+    public FilterInfo setCanaryFilter(String filter_id, int revision, ZuulUser user) {
 
         ArrayList<Integer> revisionsToDeactivate = new ArrayList<Integer>();
 
@@ -352,6 +366,12 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
         Map<String, Object> attributesForActivation = new HashMap<String, Object>();
         attributesForActivation.put("canary", true);
         attributesForActivation.put("active", false);
+
+        String userName = user == null ? "unknown" : user.getUserName();
+        Date now = Calendar.getInstance().getTime();
+        attributesForActivation.put("updated_by", userName);
+        attributesForActivation.put("updated_date", now);
+
         cassandraGateway.upsert(filter_id + "_" + revision, attributesForActivation);
 
 
@@ -365,12 +385,14 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             if (revisionToDeactivate != revision) {
                 Map<String, Object> attributesForDeactivation = new HashMap<String, Object>();
                 attributesForDeactivation.put("canary", false);
+                attributesForActivation.put("updated_by", userName);
+                attributesForActivation.put("updated_date", now);
                 cassandraGateway.upsert(filter_id + "_" + revisionToDeactivate, attributesForDeactivation);
             }
         }
 
         setChanged();
-        notifyOfFilterEvent(ZuulFilterEventType.CANARY, filter_id, revision, otherAttributes);
+        notifyOfFilterEvent(ZuulFilterEventType.CANARY, filter_id, revision, user);
 
         return getFilterInfoForFilter(filter_id, revision);
     }
@@ -400,10 +422,10 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
 
     @Override
     public FilterInfo setFilterActive(String filter_id, int revision) throws Exception {
-        return setFilterActive(filter_id, revision, new HashMap());
+        return setFilterActive(filter_id, revision, null);
     }
 
-    public FilterInfo setFilterActive(String filter_id, int revision, Map otherAttributes) throws Exception {
+    public FilterInfo setFilterActive(String filter_id, int revision, ZuulUser user) throws Exception {
 
         FilterInfo filter = getFilterInfo(filter_id, revision);
         if (filter == null) throw new Exception("Filter not Found " + filter_id + "revision:" + revision);
@@ -432,6 +454,12 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
         Map<String, Object> attributesForActivation = new HashMap<String, Object>();
         attributesForActivation.put("active", true);
         attributesForActivation.put("canary", false);
+
+        String userName = user == null ? "unknown" : user.getUserName();
+        Date now = Calendar.getInstance().getTime();
+        attributesForActivation.put("updated_by", userName);
+        attributesForActivation.put("updated_date", now);
+
         cassandraGateway.upsert(filter_id + "_" + revision, attributesForActivation);
 
         /* de-activate previously active revisions */
@@ -441,27 +469,28 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             if (revisionToDeactivate != revision) {
                 Map<String, Object> attributesForDeactivation = new HashMap<String, Object>();
                 attributesForDeactivation.put("active", false);
+                attributesForActivation.put("updated_by", userName);
+                attributesForActivation.put("updated_date", now);
                 cassandraGateway.upsert(filter_id + "_" + revisionToDeactivate, attributesForDeactivation);
             }
         }
 
         setChanged();
-        notifyOfFilterEvent(ZuulFilterEventType.ACTIVATE, filter_id, revision, otherAttributes);
+        notifyOfFilterEvent(ZuulFilterEventType.ACTIVATE, filter_id, revision, user);
 
         return getFilterInfoForFilter(filter_id, revision);
     }
 
-    protected void notifyOfFilterEvent(ZuulFilterEventType eventType, String filter_id, int revision, Map otherAttributes) {
-        String userName = (String) otherAttributes.get("userName");
-        notifyObservers(new ZuulFilterEvent(eventType, filter_id, revision, userName));
+    protected void notifyOfFilterEvent(ZuulFilterEventType eventType, String filter_id, int revision, ZuulUser user) {
+        notifyObservers(new ZuulFilterEvent(eventType, filter_id, revision, user));
     }
 
     @Override
     public FilterInfo deActivateFilter(String filter_id, int revision) throws Exception {
-        return deActivateFilter(filter_id, revision, new HashMap());
+        return deActivateFilter(filter_id, revision, null);
     }
 
-    public FilterInfo deActivateFilter(String filter_id, int revision, Map otherAttributes) throws Exception {
+    public FilterInfo deActivateFilter(String filter_id, int revision, ZuulUser user) throws Exception {
 
         FilterInfo filter = getFilterInfo(filter_id, revision);
         if (filter == null) throw new Exception("Filter not Found " + filter_id + "revision:" + revision);
@@ -478,10 +507,16 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
         Map<String, Object> attributesForActivation = new HashMap<String, Object>();
         attributesForActivation.put("active", false);
         attributesForActivation.put("canary", false);
+
+        String userName = user == null ? "unknown" : user.getUserName();
+        Date now = Calendar.getInstance().getTime();
+        attributesForActivation.put("updated_by", userName);
+        attributesForActivation.put("updated_date", now);
+
         cassandraGateway.upsert(filter_id + "_" + revision, attributesForActivation);
 
         setChanged();
-        notifyOfFilterEvent(ZuulFilterEventType.DEACTIVATE, filter_id, revision, otherAttributes);
+        notifyOfFilterEvent(ZuulFilterEventType.DEACTIVATE, filter_id, revision, user);
 
         return getFilterInfoForFilter(filter_id, revision);
     }
@@ -729,9 +764,12 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             mockColumn(columnList0, "revision", 1L);
             mockColumn(columnList0, "active", true);
             mockColumn(columnList0, "canary", false);
-            mockColumn(columnList0, "creation_date", now.getTime());
             mockColumn(columnList0, "filter_code", "script body 1".getBytes());
             mockColumn(columnList0, "application_name", "app_name");
+            mockColumn(columnList0, "creation_date", now.getTime());
+            mockColumn(columnList0, "updated_date", now.getTime());
+            mockColumn(columnList0, "created_by", "user1");
+            mockColumn(columnList0, "updated_by", "user1");
 
             // this row does NOT have a name
 
@@ -743,9 +781,12 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             mockColumn(columnList1, "filter_type", "type");
             mockColumn(columnList1, "active", false);
             mockColumn(columnList1, "canary", false);
-            mockColumn(columnList1, "creation_date", now.getTime());
             mockColumn(columnList1, "filter_code", "script body 2a".getBytes());
             mockColumn(columnList1, "application_name", "app_name");
+            mockColumn(columnList1, "creation_date", now.getTime());
+            mockColumn(columnList1, "updated_date", now.getTime());
+            mockColumn(columnList1, "created_by", "user2");
+            mockColumn(columnList1, "updated_by", "user2");
 
             // this row has names for the scripts
 
@@ -808,12 +849,15 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             mockColumn(columnList0, "filter_id", filter);
             mockColumn(columnList0, "revision", 3L);
             mockColumn(columnList0, "active", true);
-            mockColumn(columnList0, "creation_date", now.getTime());
             mockColumn(columnList0, "filter_code", "script body 1".getBytes());
             mockColumn(columnList0, "filter_name", "name");
             mockColumn(columnList0, "filter_type", "type");
             mockColumn(columnList0, "canary", false);
             mockColumn(columnList0, "application_name", "app_name");
+            mockColumn(columnList0, "creation_date", now.getTime());
+            mockColumn(columnList0, "updated_date", now.getTime());
+            mockColumn(columnList0, "created_by", "user1");
+            mockColumn(columnList0, "updated_by", "user1");
 
             Iterator<Row<String, String>> iterator = (Iterator<Row<String, String>>) mock(Iterator.class);
             when(response.iterator()).thenReturn(iterator);
@@ -872,12 +916,15 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             mockColumn(columnList0, "filter_id", filter);
             mockColumn(columnList0, "revision", 4L);
             mockColumn(columnList0, "active", false);
-            mockColumn(columnList0, "creation_date", now.getTime());
             mockColumn(columnList0, "filter_code", "script body 1".getBytes());
             mockColumn(columnList0, "filter_name", "name");
             mockColumn(columnList0, "filter_type", "type");
             mockColumn(columnList0, "canary", false);
             mockColumn(columnList0, "application_name", "app_name");
+            mockColumn(columnList0, "creation_date", now.getTime());
+            mockColumn(columnList0, "updated_date", now.getTime());
+            mockColumn(columnList0, "created_by", "user1");
+            mockColumn(columnList0, "updated_by", "user1");
 
 
             when(response.getRowByIndex(0)).thenReturn(row0);
@@ -923,13 +970,15 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             mockColumn(columnList0, "filter_id", filter);
             mockColumn(columnList0, "revision", 3L);
             mockColumn(columnList0, "active", true);
-            mockColumn(columnList0, "creation_date", now.getTime());
             mockColumn(columnList0, "filter_code", "script body 1".getBytes());
             mockColumn(columnList0, "filter_name", "name");
             mockColumn(columnList0, "filter_type", "type");
             mockColumn(columnList0, "canary", false);
             mockColumn(columnList0, "application_name", "app_name");
-
+            mockColumn(columnList0, "creation_date", now.getTime());
+            mockColumn(columnList0, "updated_date", now.getTime());
+            mockColumn(columnList0, "created_by", "user1");
+            mockColumn(columnList0, "updated_by", "user1");
 
             when(response.getRowByIndex(0)).thenReturn(row0);
 
@@ -1034,13 +1083,15 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             mockColumn(columnList0, "filter_id", filter);
             mockColumn(columnList0, "revision", 1L);
             mockColumn(columnList0, "active", false);
-            mockColumn(columnList0, "creation_date", now.getTime());
             mockColumn(columnList0, "filter_code", "script body 1".getBytes());
             mockColumn(columnList0, "filter_name", "name");
             mockColumn(columnList0, "filter_type", "type");
             mockColumn(columnList0, "canary", false);
             mockColumn(columnList0, "application_name", "app_name");
-
+            mockColumn(columnList0, "creation_date", now.getTime());
+            mockColumn(columnList0, "updated_date", now.getTime());
+            mockColumn(columnList0, "created_by", "user1");
+            mockColumn(columnList0, "updated_by", "user1");
 
             when(response.getRowByIndex(0)).thenReturn(row0);
 
@@ -1103,7 +1154,7 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
         @Test
         public void testSetScriptActive() {
             String filter = "name:type";
-            Calendar now = Calendar.getInstance();
+            Date now = Calendar.getInstance().getTime();
 
             /* define currently active script */
             Row<String, String> row0 = mockRow();
@@ -1111,12 +1162,15 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             mockColumn(columnList0, "filter_id", filter);
             mockColumn(columnList0, "revision", 3L);
             mockColumn(columnList0, "active", true);
-            mockColumn(columnList0, "creation_date", now.getTime());
             mockColumn(columnList0, "filter_code", "script body 1".getBytes());
             mockColumn(columnList0, "filter_name", "name");
             mockColumn(columnList0, "filter_type", "type");
             mockColumn(columnList0, "canary", false);
             mockColumn(columnList0, "application_name", "app_name");
+            mockColumn(columnList0, "creation_date", now);
+            mockColumn(columnList0, "updated_date", now);
+            mockColumn(columnList0, "created_by", "user1");
+            mockColumn(columnList0, "updated_by", "user1");
 
 
             when(response.getRowByIndex(0)).thenReturn(row0);
@@ -1127,13 +1181,15 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             mockColumn(columnList1, "filter_id", filter);
             mockColumn(columnList1, "revision", 4L);
             mockColumn(columnList1, "active", false);
-            mockColumn(columnList1, "creation_date", now.getTime());
             mockColumn(columnList1, "filter_code", "script body 1".getBytes());
             mockColumn(columnList1, "filter_name", "name");
             mockColumn(columnList1, "filter_type", "type");
             mockColumn(columnList1, "canary", true);
             mockColumn(columnList1, "application_name", "app_name");
-
+            mockColumn(columnList1, "creation_date", now);
+            mockColumn(columnList1, "updated_date", now);
+            mockColumn(columnList1, "created_by", "user1");
+            mockColumn(columnList1, "updated_by", "user1");
 
             when(response.getRowByIndex(1)).thenReturn(row1);
 
@@ -1152,12 +1208,15 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             mockColumn(response2columnList1, "filter_id", filter);
             mockColumn(response2columnList1, "revision", 4L);
             mockColumn(response2columnList1, "active", false);
-            mockColumn(response2columnList1, "creation_date", now.getTime());
             mockColumn(response2columnList1, "filter_code", "script body 1".getBytes());
             mockColumn(response2columnList1, "filter_name", "name");
             mockColumn(response2columnList1, "filter_type", "type");
             mockColumn(response2columnList1, "canary", true);
             mockColumn(response2columnList1, "application_name", "app_name");
+            mockColumn(response2columnList1, "creation_date", now);
+            mockColumn(response2columnList1, "updated_date", now);
+            mockColumn(response2columnList1, "created_by", "user1");
+            mockColumn(response2columnList1, "updated_by", "user1");
 
 
             when(response2.getRowByIndex(0)).thenReturn(response2row0);
@@ -1175,12 +1234,15 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             mockColumn(response3columnList1, "filter_id", filter);
             mockColumn(response3columnList1, "revision", 4L);
             mockColumn(response3columnList1, "active", false);
-            mockColumn(response3columnList1, "creation_date", now.getTime());
             mockColumn(response3columnList1, "filter_code", "script body 1".getBytes());
             mockColumn(response3columnList1, "filter_name", "name");
             mockColumn(response3columnList1, "filter_type", "type");
             mockColumn(response3columnList1, "canary", true);
             mockColumn(response3columnList1, "application_name", "app_name");
+            mockColumn(response3columnList1, "creation_date", now);
+            mockColumn(response3columnList1, "updated_date", now);
+            mockColumn(response3columnList1, "created_by", "user1");
+            mockColumn(response3columnList1, "updated_by", "user1");
 
 
             when(response3.getRowByIndex(0)).thenReturn(response3row0);
@@ -1215,12 +1277,14 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             Map<String, Object> attributesForActivation = new HashMap<String, Object>();
             attributesForActivation.put("active", true);
             attributesForActivation.put("canary", false);
-            inOrder.verify(gateway, times(1)).upsert(filter + "_4", attributesForActivation);
+            attributesForActivation.put("updated_date", now);
+            attributesForActivation.put("updated_by", "unknown");
+            inOrder.verify(gateway, times(1)).upsert(eq(filter + "_4"), anyMap());
 
             // assert that the previously active script was marked as inactive (after activation step)
             Map<String, Object> attributesForDeactivation = new HashMap<String, Object>();
             attributesForDeactivation.put("active", false);
-            inOrder.verify(gateway).upsert(filter + "_3", attributesForDeactivation);
+            inOrder.verify(gateway).upsert(eq(filter + "_3"), anyMap());
 
 
         }
@@ -1240,13 +1304,15 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             mockColumn(columnList0, "filter_id", filter);
             mockColumn(columnList0, "revision", 3L);
             mockColumn(columnList0, "active", true);
-            mockColumn(columnList0, "creation_date", now.getTime());
             mockColumn(columnList0, "filter_code", "script body 1".getBytes());
             mockColumn(columnList0, "filter_name", "name");
             mockColumn(columnList0, "filter_type", "type");
             mockColumn(columnList0, "canary", false);
             mockColumn(columnList0, "application_name", "app_name");
-
+            mockColumn(columnList0, "creation_date", now.getTime());
+            mockColumn(columnList0, "updated_date", now.getTime());
+            mockColumn(columnList0, "created_by", "user1");
+            mockColumn(columnList0, "updated_by", "user1");
 
             when(response.getRowByIndex(0)).thenReturn(row0);
 
@@ -1256,12 +1322,15 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             mockColumn(columnList1, "filter_id", filter);
             mockColumn(columnList1, "revision", 4L);
             mockColumn(columnList1, "active", false);
-            mockColumn(columnList1, "creation_date", now.getTime());
             mockColumn(columnList1, "filter_code", "script body 1".getBytes());
             mockColumn(columnList1, "filter_name", "name");
             mockColumn(columnList1, "filter_type", "type");
             mockColumn(columnList1, "canary", false);
-            mockColumn(columnList0, "application_name", "app_name");
+            mockColumn(columnList1, "application_name", "app_name");
+            mockColumn(columnList1, "creation_date", now.getTime());
+            mockColumn(columnList1, "updated_date", now.getTime());
+            mockColumn(columnList1, "created_by", "user1");
+            mockColumn(columnList1, "updated_by", "user1");
 
 
             when(response.getRowByIndex(1)).thenReturn(row1);
@@ -1314,13 +1383,15 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             mockColumn(columnList0, "filter_id", filter);
             mockColumn(columnList0, "revision", 3L);
             mockColumn(columnList0, "active", true);
-            mockColumn(columnList0, "creation_date", now.getTime());
             mockColumn(columnList0, "filter_code", "script body 1".getBytes());
             mockColumn(columnList0, "filter_name", "name");
             mockColumn(columnList0, "filter_type", "type");
             mockColumn(columnList0, "canary", true);
             mockColumn(columnList0, "application_name", "app_name");
-
+            mockColumn(columnList0, "creation_date", now.getTime());
+            mockColumn(columnList0, "updated_date", now.getTime());
+            mockColumn(columnList0, "created_by", "user1");
+            mockColumn(columnList0, "updated_by", "user1");
 
             when(response.getRowByIndex(0)).thenReturn(row0);
 
@@ -1350,12 +1421,12 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             Map<String, Object> attributesForActivation = new HashMap<String, Object>();
             attributesForActivation.put("active", true);
             attributesForActivation.put("canary", false);
-            inOrder.verify(gateway, times(1)).upsert(filter + "_3", attributesForActivation);
+            inOrder.verify(gateway, times(1)).upsert(eq(filter + "_3"), anyMap());
 
             // ensure we do NOT deactivate it since this is the same revision
             Map<String, Object> attributesForDeactivation = new HashMap<String, Object>();
             attributesForDeactivation.put("active", false);
-            inOrder.verify(gateway, times(0)).upsert(filter + "_3", attributesForDeactivation);
+            inOrder.verify(gateway, times(0)).upsert(eq(filter + "_3"), anyMap());
         }
 
         /**
@@ -1426,11 +1497,14 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             mockColumn(columnList0, "filter_id", filter);
             mockColumn(columnList0, "revision", 1L);
             mockColumn(columnList0, "active", false);
-            mockColumn(columnList0, "creation_date", now.getTime());
             mockColumn(columnList0, "filter_code", "System.out.println(\"hello world\")".getBytes()); // what we put here doesn't matter
             mockColumn(columnList0, "filter_name", "name");
             mockColumn(columnList0, "filter_type", "type");
             mockColumn(columnList0, "canary", false);
+            mockColumn(columnList0, "creation_date", now.getTime());
+            mockColumn(columnList0, "updated_date", now.getTime());
+            mockColumn(columnList0, "created_by", "user1");
+            mockColumn(columnList0, "updated_by", "user1");
 
             when(response.getRowByIndex(0)).thenReturn(row0);
 

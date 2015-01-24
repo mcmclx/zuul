@@ -23,6 +23,9 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.MockitoAnnotations;
 
+import java.util.Calendar;
+import java.util.Date;
+
 import static org.junit.Assert.*;
 
 /**
@@ -52,16 +55,19 @@ public class FilterVerifier {
      * @throws IllegalAccessException
      * @throws InstantiationException
      */
-    public FilterInfo verifyFilter(String sFilterCode) throws org.codehaus.groovy.control.CompilationFailedException, IllegalAccessException, InstantiationException {
+    public FilterInfo verifyFilter(String sFilterCode) throws org.codehaus.groovy.control.CompilationFailedException,
+            IllegalAccessException, InstantiationException {
+
         Class groovyClass = compileGroovy(sFilterCode);
         Object instance = instanciateClass(groovyClass);
         checkZuulFilterInstance(instance);
         ZuulFilter filter = (ZuulFilter) instance;
 
-
         String filter_id = FilterInfo.buildFilterID(ZuulApplicationInfo.getApplicationName(), filter.filterType(), groovyClass.getSimpleName());
+        Date now = Calendar.getInstance().getTime();
 
-        return new FilterInfo(filter_id, sFilterCode, filter.filterType(), groovyClass.getSimpleName(), filter.disablePropertyName(), "" + filter.filterOrder(), ZuulApplicationInfo.getApplicationName());
+        return new FilterInfo(filter_id, 0, now, now, false, false, sFilterCode, filter.filterType(), groovyClass.getSimpleName(),
+                filter.disablePropertyName(), "" + filter.filterOrder(), ZuulApplicationInfo.getApplicationName(), null, null);
     }
 
     Object instanciateClass(Class groovyClass) throws InstantiationException, IllegalAccessException {

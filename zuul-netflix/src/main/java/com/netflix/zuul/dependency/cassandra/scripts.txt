@@ -26,8 +26,11 @@ create column family zuul_filters with comparator = 'UTF8Type' and key_validatio
    		{column_name: revision, validation_class: LongType, index_type: KEYS},
    		{column_name: active, validation_class: BooleanType, index_type: KEYS},
    		{column_name: canary, validation_class: BooleanType, index_type: 0},
-   		{column_name: creation_date, validation_class: DateType, index_type: 0}
-   		{column_name: application_name, validation_class: UTF8Type, index_type: KEYS}
+   		{column_name: application_name, validation_class: UTF8Type, index_type: KEYS},
+   		{column_name: creation_date, validation_class: DateType, index_type: 0},
+   		{column_name: updated_date, validation_class: DateType, index_type: 0},
+   		{column_name: created_by, validation_class: UTF8Type, index_type: 0},
+   		{column_name: updated_by, validation_class: UTF8Type, index_type: 0}
    ]
    and rows_cached = 10000
    and row_cache_provider = SerializingCacheProvider
@@ -47,8 +50,11 @@ update column family zuul_filters with  comparator=UTF8Type and column_metadata=
    		{column_name: revision, validation_class: LongType, index_type: KEYS},
    		{column_name: active, validation_class: BooleanType, index_type: KEYS},
    		{column_name: canary, validation_class: BooleanType, index_type: 0},
-   		{column_name: creation_date, validation_class: DateType, index_type: 0}
-   		{column_name: application_name, validation_class: UTF8Type, index_type: KEYS}
+   		{column_name: application_name, validation_class: UTF8Type, index_type: KEYS},
+   		{column_name: creation_date, validation_class: DateType, index_type: 0},
+   		{column_name: updated_date, validation_class: DateType, index_type: 0},
+   		{column_name: created_by, validation_class: UTF8Type, index_type: 0},
+   		{column_name: updated_by, validation_class: UTF8Type, index_type: 0}
    ];
 
 
