@@ -269,10 +269,11 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             String application_name = columns.getColumnByName("application_name").getStringValue();
 
             Date creationDate = columns.getColumnByName("creation_date").getDateValue();
-            Date updatedDate = columns.getColumnByName("updated_date").getDateValue();
 
-            String createdByUserName = columns.getColumnByName("created_by").getStringValue();
-            String updatedByUserName = columns.getColumnByName("updated_by").getStringValue();
+            // Handle these new columns backwards-compatibly.
+            Date updatedDate = getColumnDateValueIfExists(columns, "updated_date");
+            String createdByUserName = getColumnStringValueIfExists(columns, "created_by");
+            String updatedByUserName = getColumnStringValueIfExists(columns, "updated_by");
             ZuulUser createdBy = createdByUserName == null ? null : new ZuulUser(createdByUserName);
             ZuulUser updatedBy = updatedByUserName == null ? null : new ZuulUser(updatedByUserName);
 
@@ -285,6 +286,22 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             logger.warn("Unable to retrieve data from row => uri : " + filterName + "  revision: " + revision + "  row: " + row, e);
             return null;
         }
+    }
+
+    protected String getColumnStringValueIfExists(ColumnList columns, String name) {
+        Column col = columns.getColumnByName(name);
+        if (col != null) {
+            return col.getStringValue();
+        }
+        return null;
+    }
+
+    protected Date getColumnDateValueIfExists(ColumnList columns, String name) {
+        Column col = columns.getColumnByName(name);
+        if (col != null) {
+            return col.getDateValue();
+        }
+        return null;
     }
 
     @Override
