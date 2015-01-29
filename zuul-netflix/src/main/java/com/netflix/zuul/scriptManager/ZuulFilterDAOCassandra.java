@@ -245,6 +245,53 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
         }
     }
 
+    public List<FilterInfo> getAllFiltersWithoutCode(String applicationName) {
+
+        String fieldList =
+                "filter_name, " +
+                "filter_type, " +
+                "filter_id, " +
+                "revision, " +
+                "active, " +
+                "canary, " +
+                //"filter_code, " +
+                "filter_disable, " +
+                "filter_order, " +
+                "application_name, " +
+                "created_by, " +
+                "updated_by, " +
+                "creation_date, " +
+                "updated_date";
+
+        String cql = "select " + fieldList + " from zuul_filters where application_name = '" + applicationName + "'";
+        Rows<String, String> result = cassandraGateway.select(cql);
+
+        if (result == null || result.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<FilterInfo> filterInfos = new ArrayList<FilterInfo>();
+        for (Row<String, String> row : result) {
+            try {
+                FilterInfo filter = getFilterScriptFromCassandraRow(row, false);
+                if (filter != null)
+                    filterInfos.add(filter);
+
+            } catch (Exception e) {
+                logger.error("Error building FilterInfo from row. row=" + String.valueOf(row), e);
+            }
+        }
+
+        // Sort the filters.
+        if (filterInfos == null || filterInfos.size() == 0) {
+            return Collections.emptyList();
+        } else {
+            Collections.sort(filterInfos);
+            return filterInfos;
+
+        }
+    }
+
     /**
      * Utility method for pulling data from Cassandra Row into an FilterInfo object
      *
@@ -252,6 +299,18 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
      * @return
      */
     public FilterInfo getFilterScriptFromCassandraRow(Row<String, String> row) {
+        return getFilterScriptFromCassandraRow(row, true);
+    }
+
+    /**
+     * Utility method for pulling data from Cassandra Row into an FilterInfo object, but optionally
+     * without including the filter code field.
+     *
+     * @param row
+     * @param includeCode
+     * @return
+     */
+    public FilterInfo getFilterScriptFromCassandraRow(Row<String, String> row, boolean includeCode) {
         String filterName = null;
         int revision = -1;
         try {
@@ -265,10 +324,13 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             revision = (int) columns.getColumnByName("revision").getLongValue();
             boolean isActive = columns.getColumnByName("active").getBooleanValue();
             boolean isCanary = columns.getColumnByName("canary").getBooleanValue();
-            String filterCode = new String(columns.getColumnByName("filter_code").getByteArrayValue());
+
+            // Only include the filter_code if requested.
+            String filterCode = includeCode ? new String(columns.getColumnByName("filter_code").getByteArrayValue()) : null;
+
             String application_name = columns.getColumnByName("application_name").getStringValue();
 
-            Date creationDate = columns.getColumnByName("creation_date").getDateValue();
+            Date creationDate = getColumnDateValueIfExists(columns, "creation_date");
 
             // Handle these new columns backwards-compatibly.
             Date updatedDate = getColumnDateValueIfExists(columns, "updated_date");
@@ -290,7 +352,7 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
 
     protected String getColumnStringValueIfExists(ColumnList columns, String name) {
         Column col = columns.getColumnByName(name);
-        if (col != null) {
+        if (col != null && col.hasValue()) {
             return col.getStringValue();
         }
         return null;
@@ -298,7 +360,7 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
 
     protected Date getColumnDateValueIfExists(ColumnList columns, String name) {
         Column col = columns.getColumnByName(name);
-        if (col != null) {
+        if (col != null && col.hasValue()) {
             return col.getDateValue();
         }
         return null;
