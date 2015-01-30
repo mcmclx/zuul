@@ -1535,8 +1535,13 @@ public class ZuulFilterDAOCassandra extends Observable implements ZuulFilterDAO 
             } else {
                 throw new RuntimeException("unsupported type, add another else above");
             }
+
+            // Mock the hasValue() method.
+            when(column.hasValue()).thenReturn(value != null);
+
             /* assign column to columnList for given columnName */
             when(columnList.getColumnByName(columnName)).thenReturn(column);
+
             return column;
         }
 
